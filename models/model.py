@@ -437,131 +437,37 @@ class TRGAN(nn.Module):
 
         return self.real_base, self.fake_base
 
-    def _generate_page(self, ST, SLEN, eval_text_encode = None, eval_len_text = None):
+    def _generate_page(self, ST, SLEN, eval_text_encode=None, eval_len_text=None):
+        import numpy as np
 
-        if eval_text_encode == None:
+        if eval_text_encode is None:
             eval_text_encode = self.eval_text_encode
-        if eval_len_text == None:
-            eval_len_text = self.eval_len_text
-        # print("\n[DEBUG - 畫圖檢查]")
-        # print("預計畫出的文字編碼:", eval_text_encode[0].cpu().tolist())
 
         self.fakes = self.netG.Eval(ST, eval_text_encode)
+        fake_imgs = self.fakes[0]
 
-        page1s = []
-        page2s = []
+        page_rows = []
+        gap = np.ones((128, 4)) # resolution=128
+        
+        for b in range(self.batch_size):
+            row_images = []
+            sdata_b = ST[b]
+            for i in range(sdata_b.shape[0]):
+                img_np = (sdata_b[i].cpu().numpy() + 1.0) / 2.0
+                row_images.append(img_np)
+                row_images.append(gap)
+                
+            separator = np.ones((128, 16)) * 0.5 
+            row_images.append(separator)
+            
+            fake_np = (fake_imgs[b, 0].cpu().numpy() + 1.0) / 2.0
+            row_images.append(fake_np)
+            
+            concatenated_row = np.concatenate(row_images, axis=1)
+            page_rows.append(concatenated_row)
+            page_rows.append(np.ones((4, concatenated_row.shape[1])))
 
-        for batch_idx in range(self.batch_size):
-       
-            word_t = []
-            word_l = []
-
-            gap = np.ones([IMG_HEIGHT,16])
-
-            line_wids = []
-
-            for idx, fake_ in enumerate(self.fakes):
-
-                word_t.append((fake_[batch_idx,0,:,:eval_len_text[idx]*resolution].cpu().numpy()+1)/2)
-
-                word_t.append(gap)
-
-                if len(word_t) == 16 or idx == len(self.fakes) - 1:
-
-                    line_ = np.concatenate(word_t, -1)
-
-                    word_l.append(line_)
-                    line_wids.append(line_.shape[1])
-
-                    word_t = []
-
-
-            gap_h = np.ones([16,max(line_wids)])
-
-            page_= []
-
-            for l in word_l:
-
-                pad_ = np.ones([IMG_HEIGHT,max(line_wids) - l.shape[1]])
-
-                page_.append(np.concatenate([l, pad_], 1))
-                page_.append(gap_h)
-
-
-
-            page1 = np.concatenate(page_, 0)
-
-
-            word_t = []
-            word_l = []
-
-            gap = np.ones([IMG_HEIGHT,16])
-
-            line_wids = []
-
-            sdata_ = [i.unsqueeze(1) for i in torch.unbind(ST, 1)]
-
-            for idx, st in enumerate((sdata_)):
-
-                word_t.append((st[batch_idx,0,:,:int(SLEN.cpu().numpy()[batch_idx][idx])].cpu().numpy()+1)/2)
-
-                word_t.append(gap)
-
-                if len(word_t) == 16 or idx == len(sdata_) - 1:
-
-                    line_ = np.concatenate(word_t, -1)
-
-                    word_l.append(line_)
-                    line_wids.append(line_.shape[1])
-
-                    word_t = []
-
-
-            gap_h = np.ones([16,max(line_wids)])
-
-            page_= []
-
-            for l in word_l:
-
-                pad_ = np.ones([IMG_HEIGHT,max(line_wids) - l.shape[1]])
-
-                page_.append(np.concatenate([l, pad_], 1))
-                page_.append(gap_h)
-
-
-
-            page2 = np.concatenate(page_, 0)
-
-            merge_w_size =  max(page1.shape[0], page2.shape[0])
-
-            if page1.shape[0] != merge_w_size:
-
-                page1 = np.concatenate([page1, np.ones([merge_w_size-page1.shape[0], page1.shape[1]])], 0)
-
-            if page2.shape[0] != merge_w_size:
-
-                page2 = np.concatenate([page2, np.ones([merge_w_size-page2.shape[0], page2.shape[1]])], 0)
-
-
-            page1s.append(page1)
-            page2s.append(page2)
-
-
-            #page = np.concatenate([page2, page1], 1)
-
-        page1s_ = np.concatenate(page1s,0)
-        max_wid = max([i.shape[1] for i in page2s])
-        padded_page2s = []
-
-        for para in page2s:
-            padded_page2s.append(np.concatenate([para, np.ones([ para.shape[0], max_wid-para.shape[1]])], 1))
-
-        padded_page2s_ =  np.concatenate(padded_page2s,0)
-
-
-
-
-        return np.concatenate([padded_page2s_, page1s_], 1)
+        return np.concatenate(page_rows, axis=0) * 255.0
 
 
 
@@ -797,70 +703,18 @@ class TRGAN(nn.Module):
 
 
     def backward_G_only(self):
-        
-        self.gb_alpha = 0.7
-        #self.Lcycle1 = self.Lcycle1.mean()
-        #self.Lcycle2 = self.Lcycle2.mean()
+        # 1. 算 GAN Loss
         self.loss_G = loss_hinge_gen(self.netD(**{'x': self.fake}), self.len_text_fake.detach(), True).mean()
-    
-
+        
+        # 2. 算 OCR Loss
         pred_fake_OCR = self.netOCR(self.fake)
-        # preds_size = torch.IntTensor([pred_fake_OCR.size(0)] * self.batch_size).detach()
-        # loss_OCR_fake = self.OCR_criterion(pred_fake_OCR, self.text_encode_fake.detach(), preds_size, self.len_text_fake.detach())
-        # 🌟 算假圖 (Fake) - 注意是用 fake 的變數！
         target = self.text_encode_fake.detach().long().view(-1)
         loss_OCR_fake = self.OCR_criterion(pred_fake_OCR, target)
         self.loss_OCR_fake = torch.mean(loss_OCR_fake[~torch.isnan(loss_OCR_fake)])
 
-        self.loss_G = self.loss_G + self.Lcycle1 + self.Lcycle2 + self.lda1 + self.lda2 - self.KLD
-        
-        # self.loss_T = self.loss_G + self.loss_OCR_fake
-        self.loss_T = self.loss_G + (2.0 * self.loss_OCR_fake)
- 
-
-        grad_fake_OCR = torch.autograd.grad(self.loss_OCR_fake, self.fake, retain_graph=True)[0]
-
-
-        self.loss_grad_fake_OCR = 10**6*torch.mean(grad_fake_OCR**2)
-        grad_fake_adv = torch.autograd.grad(self.loss_G, self.fake, retain_graph=True)[0]
-        self.loss_grad_fake_adv = 10**6*torch.mean(grad_fake_adv**2)
-        
-            
-        self.loss_T.backward(retain_graph=True)
-        torch.nn.utils.clip_grad_norm_(self.netG.parameters(), max_norm=1.0) # 👈 加入這行
-        
-        grad_fake_OCR = torch.autograd.grad(self.loss_OCR_fake, self.fake, create_graph=True, retain_graph=True)[0]
-        grad_fake_adv = torch.autograd.grad(self.loss_G, self.fake, create_graph=True, retain_graph=True)[0]
-
-
-        a = self.gb_alpha * torch.div(torch.std(grad_fake_adv), self.epsilon+torch.std(grad_fake_OCR))
-
-
-        if a is None:
-            print(self.loss_OCR_fake, self.loss_G, torch.std(grad_fake_adv), torch.std(grad_fake_OCR))
-        if a>1000 or a<0.0001:
-            print(a)
-      
-       
-        self.loss_OCR_fake = a.detach() * self.loss_OCR_fake
-
-        self.loss_T = self.loss_G + self.loss_OCR_fake
-
-
-        self.loss_T.backward(retain_graph=True)
-        torch.nn.utils.clip_grad_norm_(self.netG.parameters(), max_norm=1.0) # 👈 加入這行
-        grad_fake_OCR = torch.autograd.grad(self.loss_OCR_fake, self.fake, create_graph=False, retain_graph=True)[0]
-        grad_fake_adv = torch.autograd.grad(self.loss_G, self.fake, create_graph=False, retain_graph=True)[0]
-        self.loss_grad_fake_OCR = 10 ** 6 * torch.mean(grad_fake_OCR ** 2)
-        self.loss_grad_fake_adv = 10 ** 6 * torch.mean(grad_fake_adv ** 2)
-
-        with torch.no_grad():
-            self.loss_T.backward()
-            torch.nn.utils.clip_grad_norm_(self.netG.parameters(), max_norm=1.0) # 👈 加入這行
-    
-        if any(torch.isnan(loss_OCR_fake)) or torch.isnan(self.loss_G):
-            print('loss OCR fake: ', loss_OCR_fake, ' loss_G: ', self.loss_G, ' words: ', self.words)
-            sys.exit()
+        # 3. 乾淨俐落的總和與反向傳播 (5.0 倍權重)
+        self.loss_T = self.loss_G + (5.0 * self.loss_OCR_fake)
+        self.loss_T.backward()
 
     def backward_G_WL(self):
 
@@ -907,82 +761,22 @@ class TRGAN(nn.Module):
             self.loss_T.backward()
             
     def backward_G(self):
-        self.opt.gb_alpha = 0.7
+        # 1. 算 GAN Loss
         self.loss_G = loss_hinge_gen(self.netD(**{'x': self.fake, 'z': self.z}), self.len_text_fake.detach(), self.opt.mask_loss)
-        # OCR loss on real data
-
+        
+        # 2. 算 OCR Loss
         pred_fake_OCR = self.netOCR(self.fake)
-        # preds_size = torch.IntTensor([pred_fake_OCR.size(0)] * self.opt.batch_size).detach()
-        # loss_OCR_fake = self.OCR_criterion(pred_fake_OCR, self.text_encode_fake.detach(), preds_size, self.len_text_fake.detach())
-        # 🌟 算假圖 (Fake) - 注意是用 fake 的變數！
         target = self.text_encode_fake.detach().long().view(-1)
         loss_OCR_fake = self.OCR_criterion(pred_fake_OCR, target)
         self.loss_OCR_fake = torch.mean(loss_OCR_fake[~torch.isnan(loss_OCR_fake)])
         
-
+        # 3. 算 Style Loss
         self.loss_w_fake = self.netW(self.fake, self.wcl)
-        #self.loss_OCR_fake = self.loss_OCR_fake + self.loss_w_fake
-        # total loss
-
-       # l1 = self.params[0]*self.loss_G
-       # l2 = self.params[0]*self.loss_OCR_fake
-        #l3 = self.params[0]*self.loss_w_fake
-        self.loss_G_ = 10*self.loss_G + self.loss_w_fake
-        self.loss_T = self.loss_G_ + (2.0 * self.loss_OCR_fake)
-
-        grad_fake_OCR = torch.autograd.grad(self.loss_OCR_fake, self.fake, retain_graph=True)[0]
-
-
-        self.loss_grad_fake_OCR = 10**6*torch.mean(grad_fake_OCR**2)
-        grad_fake_adv = torch.autograd.grad(self.loss_G_, self.fake, retain_graph=True)[0]
-        self.loss_grad_fake_adv = 10**6*torch.mean(grad_fake_adv**2)
         
-        if not False:
-
-            self.loss_T.backward(retain_graph=True)
-            torch.nn.utils.clip_grad_norm_(self.netG.parameters(), max_norm=1.0) # 👈 加入這行
-         
-            grad_fake_OCR = torch.autograd.grad(self.loss_OCR_fake, self.fake, create_graph=True, retain_graph=True)[0]
-            grad_fake_adv = torch.autograd.grad(self.loss_G_, self.fake, create_graph=True, retain_graph=True)[0]
-            #grad_fake_wl = torch.autograd.grad(self.loss_w_fake, self.fake, create_graph=True, retain_graph=True)[0]
-
-
-            a = self.opt.gb_alpha * torch.div(torch.std(grad_fake_adv), self.epsilon+torch.std(grad_fake_OCR))
-
-
-            #a0 = self.opt.gb_alpha * torch.div(torch.std(grad_fake_adv), self.epsilon+torch.std(grad_fake_wl))
-
-            if a is None:
-                print(self.loss_OCR_fake, self.loss_G_, torch.std(grad_fake_adv), torch.std(grad_fake_OCR))
-            if a>1000 or a<0.0001:
-                print(a)
-            b = self.opt.gb_alpha * (torch.mean(grad_fake_adv) -
-                                            torch.div(torch.std(grad_fake_adv), self.epsilon+torch.std(grad_fake_OCR))*
-                                            torch.mean(grad_fake_OCR))
-            # self.loss_OCR_fake = a.detach() * self.loss_OCR_fake + b.detach() * torch.sum(self.fake)
-            self.loss_OCR_fake = a.detach() * self.loss_OCR_fake
-            #self.loss_w_fake = a0.detach() * self.loss_w_fake
-
-            # self.loss_T = (1-1*self.opt.onlyOCR)*self.loss_G_ + self.loss_OCR_fake# + self.loss_w_fake
-            self.loss_T = (1-1*self.opt.onlyOCR)*self.loss_G_ + (2.0 * self.loss_OCR_fake)
-            self.loss_T.backward(retain_graph=True)
-            torch.nn.utils.clip_grad_norm_(self.netG.parameters(), max_norm=1.0) # 👈 加入這行
-            grad_fake_OCR = torch.autograd.grad(self.loss_OCR_fake, self.fake, create_graph=False, retain_graph=True)[0]
-            grad_fake_adv = torch.autograd.grad(self.loss_G_, self.fake, create_graph=False, retain_graph=True)[0]
-            self.loss_grad_fake_OCR = 10 ** 6 * torch.mean(grad_fake_OCR ** 2)
-            self.loss_grad_fake_adv = 10 ** 6 * torch.mean(grad_fake_adv ** 2)
-            with torch.no_grad():
-                self.loss_T.backward()
-                torch.nn.utils.clip_grad_norm_(self.netG.parameters(), max_norm=1.0) # 👈 加入這行
-        else:
-            self.loss_T.backward()
-            torch.nn.utils.clip_grad_norm_(self.netG.parameters(), max_norm=1.0) # 👈 加入這行
-
-        if self.opt.clip_grad > 0:
-             clip_grad_norm_(self.netG.parameters(), self.opt.clip_grad)
-        if any(torch.isnan(loss_OCR_fake)) or torch.isnan(self.loss_G_):
-            print('loss OCR fake: ', loss_OCR_fake, ' loss_G: ', self.loss_G, ' words: ', self.words)
-            sys.exit()
+        # 4. 乾淨俐落的總和與反向傳播 (5.0 倍權重)
+        self.loss_G_ = 10 * self.loss_G + self.loss_w_fake
+        self.loss_T = self.loss_G_ + (5.0 * self.loss_OCR_fake)
+        self.loss_T.backward()
 
             
 
