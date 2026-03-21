@@ -310,6 +310,7 @@ class TRGAN(nn.Module):
     def __init__(self, batch_size=batch_size):
         super(TRGAN, self).__init__() 
         
+        self.ocr_weight = 0.1
         self.batch_size = batch_size
         self.epsilon = 1e-7
         self.netG = Generator().to(DEVICE)
@@ -721,8 +722,7 @@ class TRGAN(nn.Module):
         loss_OCR_fake = self.OCR_criterion(pred_fake_OCR, target)
         self.loss_OCR_fake = torch.mean(loss_OCR_fake[~torch.isnan(loss_OCR_fake)])
 
-        # 🌟 使用 2.0 倍權重，壓力剛剛好！
-        self.loss_T = self.loss_G + (2.0 * self.loss_OCR_fake)
+        self.loss_T = self.loss_G + (self.ocr_weight * self.loss_OCR_fake)
         self.loss_T.backward()
 
     def backward_G_WL(self):
@@ -737,8 +737,7 @@ class TRGAN(nn.Module):
         loss_OCR_fake = self.OCR_criterion(pred_fake_OCR, target)
         self.loss_OCR_fake = torch.mean(loss_OCR_fake[~torch.isnan(loss_OCR_fake)])
 
-        # 🌟 使用 2.0 倍權重
-        self.loss_T = self.loss_G + self.loss_w_fake + (2.0 * self.loss_OCR_fake)
+        self.loss_T = self.loss_G + self.loss_w_fake + (self.ocr_weight * self.loss_OCR_fake)
         self.loss_T.backward()
 
     def backward_G(self):
@@ -755,9 +754,8 @@ class TRGAN(nn.Module):
         loss_OCR_fake = self.OCR_criterion(pred_fake_OCR, target)
         self.loss_OCR_fake = torch.mean(loss_OCR_fake[~torch.isnan(loss_OCR_fake)])
         
-        # 🌟 再次確認！這裡絕對沒有 10 * loss_G 的搗亂！
         self.loss_G_ = self.loss_G + self.loss_w_fake
-        self.loss_T = self.loss_G_ + (2.0 * self.loss_OCR_fake)
+        self.loss_T = self.loss_G_ + (self.ocr_weight * self.loss_OCR_fake)
         self.loss_T.backward()
 
 
@@ -937,8 +935,8 @@ class TRGAN(nn.Module):
         loss_OCR_fake = self.OCR_criterion(pred_fake_OCR, target)
         self.loss_OCR_fake = torch.mean(loss_OCR_fake[~torch.isnan(loss_OCR_fake)])
         
-        # 🌟 G 沒有被放大，所以直接給 3.0 倍
-        self.loss_T = self.loss_G + (3.0 * self.loss_OCR_fake)
+
+        self.loss_T = self.loss_G + (self.ocr_weight * self.loss_OCR_fake)
         
         self.loss_T.backward() # 原本是 self.loss_G.backward()
         torch.nn.utils.clip_grad_norm_(self.netG.parameters(), max_norm=1.0) # 👈 加上梯度保護

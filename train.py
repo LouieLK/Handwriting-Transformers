@@ -58,7 +58,24 @@ def main():
         if not os.path.isdir(MODEL_PATH): os.mkdir(MODEL_PATH)
 
 
-    for epoch in range(EPOCHS):    
+    for epoch in range(EPOCHS):
+        
+        # 🌟 絕對安全的 OCR 新手保護期 (Warm-up)
+        if epoch < 500:
+            # 階段一：純粹學畫畫 (完全無視 OCR，逼 G 學會畫出漂亮的墨水線條)
+            current_ocr_weight = 0.0 
+        elif epoch < 1500:
+            # 階段二：溫和引導 (1.0 的輕微壓力，讓墨水線條開始聚攏成字的形狀)
+            current_ocr_weight = 0.1 
+        elif epoch < 3000:
+            # 階段三：正式訓練 (等比例的壓力，要求字一定要寫對)
+            current_ocr_weight = 1.0 
+        else:
+            # 階段四：大師雕琢 (強大壓力，連撇捺的細節都不放過)
+            current_ocr_weight = 3.0 
+            
+        # 將動態權重賦值給模型
+        model.ocr_weight = current_ocr_weight
 
         
         start_time = time.time()
