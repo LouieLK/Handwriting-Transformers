@@ -99,19 +99,25 @@ def main():
         
         with open(log_file, mode='a', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
+            
+            # 定義所有想要記錄的 loss 欄位 (對應 losses 字典裡的 key)
+            loss_keys = ['G', 'D', 'Dfake', 'Dreal', 'OCR_fake', 'OCR_real', 'w_fake', 'w_real']
+            
             # 如果是第一次建立檔案，先寫入標題
             if not file_exists:
-                writer.writerow(['epoch', 'loss_G', 'loss_D', 'loss_OCR_real'])
+                header = ['epoch'] + [f'loss_{k}' for k in loss_keys]
+                writer.writerow(header)
             
-            # 將 Tensor 轉換為浮點數寫入
-            # 使用 float() 是為了防止某些 loss 剛好是整數 0 而報錯
-            val_G = float(losses['G']) if hasattr(losses['G'], 'item') else float(losses['G'])
-            val_D = float(losses['D']) if hasattr(losses['D'], 'item') else float(losses['D'])
-            val_OCR = float(losses['OCR_real']) if hasattr(losses['OCR_real'], 'item') else float(losses['OCR_real'])
+            # 🌟 建立一個小函數：將 Tensor 轉為 float，並「只取小數點後 3 位」
+            def to_float_rounded(val):
+                num = float(val.item()) if hasattr(val, 'item') else float(val)
+                return round(num, 3)
             
-            writer.writerow([epoch, val_G, val_D, val_OCR])
+            # 依序列出 epoch 以及所有的 loss 數值
+            row_data = [epoch] + [to_float_rounded(losses[k]) for k in loss_keys]
+            writer.writerow(row_data)
 
-        if epoch % 1000 == 0:
+        if epoch % 500 == 0:
             page = model._generate_page(model.sdata, model.input['swids'])
             page_val = model._generate_page(data_val['simg'].to(DEVICE), data_val['swids'])
             
@@ -119,17 +125,16 @@ def main():
                         })
         
         wandb.log({'loss-G': losses['G'],
-                    'loss-D': losses['D'], 
-                    'loss-Dfake': losses['Dfake'],
-                    'loss-Dreal': losses['Dreal'],
-                    'loss-OCR_fake': losses['OCR_fake'],
-                    'loss-OCR_real': losses['OCR_real'],
-                    'loss-w_fake': losses['w_fake'],
-                    'loss-w_real': losses['w_real'],
-                    'epoch' : epoch,
-                    'timeperepoch': end_time-start_time,
-                    
-                    })
+                   'loss-D': losses['D'], 
+                   'loss-Dfake': losses['Dfake'],
+                   'loss-Dreal': losses['Dreal'],
+                   'loss-OCR_fake': losses['OCR_fake'],
+                   'loss-OCR_real': losses['OCR_real'],
+                   'loss-w_fake': losses['w_fake'],
+                   'loss-w_real': losses['w_real'],
+                   'epoch' : epoch,
+                   'timeperepoch': end_time-start_time,
+                   })
 
                     
 
