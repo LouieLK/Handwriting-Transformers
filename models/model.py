@@ -443,37 +443,51 @@ class TRGAN(nn.Module):
         if eval_text_encode is None:
             eval_text_encode = self.eval_text_encode
 
-        # 取得生成的假圖 (包含 mytext.txt 裡的所有字元)
+        # 動態取得當前的解析度 (無論是 128, 64 還是 256 都不會報錯)
+        res = ST.shape[-1]
+        
+        # 1. 取得生成的假圖
         self.fakes = self.netG.Eval(ST, eval_text_encode)
 
         page_rows = []
-        gap = np.ones((self.opt.resolution if hasattr(self, 'opt') else 128, 4)) 
+        gap = np.ones((res, 4)) 
+        separator = np.ones((res, 16)) * 0.5 
         
-        for b in range(self.batch_size):
+        # 🌟 修正點 1: 使用 ST.shape[0] 而不是 self.batch_size，避免驗證集數量不同導致崩潰
+        current_batch_size = ST.shape[0]
+
+        for b in range(current_batch_size):
             row_images = []
             
             # --- a. 放入該作者的風格參考圖 (Simg) ---
             sdata_b = ST[b]
             for i in range(sdata_b.shape[0]):
-                img_np = (sdata_b[i].cpu().numpy() + 1.0) / 2.0
+                # 🌟 修正點 2: 加上 .squeeze()，把 [1, 128, 128] 降維成 [128, 128]，才能和 gap 拼接
+                img_np = (sdata_b[i].squeeze().cpu().numpy() + 1.0) / 2.0
                 row_images.append(img_np)
                 row_images.append(gap)
                 
             # 加入灰色分隔線
-            separator = np.ones((128, 16)) * 0.5 
             row_images.append(separator)
             
-            # --- b. 放入生成的假字 (依序畫出 mytext.txt 裡所有的字！) ---
+            # --- b. 放入生成的假字 (依序畫出 mytext.txt 裡所有的字) ---
             for fake_idx in range(len(self.fakes)):
-                fake_np = (self.fakes[fake_idx][b, 0].cpu().numpy() + 1.0) / 2.0
+                # 這裡一樣加上 .squeeze() 確保維度是 2D 的 [128, 128]
+                fake_np = (self.fakes[fake_idx][b].squeeze().cpu().numpy() + 1.0) / 2.0
                 row_images.append(fake_np)
                 row_images.append(gap)
             
+            # 橫向拼接這一列的所有圖片
             concatenated_row = np.concatenate(row_images, axis=1)
             page_rows.append(concatenated_row)
+            
+            # 加上列與列之間水平的白色間隙
             page_rows.append(np.ones((4, concatenated_row.shape[1])))
 
-        return np.concatenate(page_rows, axis=0) * 255.0
+        # 將所有列縱向拼接起來
+        final_page = np.concatenate(page_rows, axis=0) * 255.0
+        
+        return final_page
 
 
 
@@ -711,13 +725,16 @@ class TRGAN(nn.Module):
         # 1. 算 GAN Loss
         self.loss_G = loss_hinge_gen(self.netD(**{'x': self.fake}), self.len_text_fake.detach(), True).mean()
         
-        # 2. 算 OCR Loss
+        # 2. 算 OCR Loss (使用修復後的程式碼)
         pred_fake_OCR = self.netOCR(self.fake)
-        target = self.text_encode_fake.detach().long().view(-1)
+        if pred_fake_OCR.dim() == 3:
+            pred_fake_OCR = pred_fake_OCR.squeeze(0)
+        target = self.text_encode_fake.detach().long().squeeze()
+        
         loss_OCR_fake = self.OCR_criterion(pred_fake_OCR, target)
         self.loss_OCR_fake = torch.mean(loss_OCR_fake[~torch.isnan(loss_OCR_fake)])
 
-        # 3. 乾淨俐落的總和與反向傳播 (5.0 倍權重！)
+        # 3. 乘以 5 倍權重並 Backward
         self.loss_T = self.loss_G + (5.0 * self.loss_OCR_fake)
         self.loss_T.backward()
 
@@ -726,11 +743,14 @@ class TRGAN(nn.Module):
         self.loss_w_fake = self.netW(self.fake, self.input['wcl'].to(DEVICE)).mean()
         
         pred_fake_OCR = self.netOCR(self.fake)
-        target = self.text_encode_fake.detach().long().view(-1)
+        if pred_fake_OCR.dim() == 3:
+            pred_fake_OCR = pred_fake_OCR.squeeze(0)
+        target = self.text_encode_fake.detach().long().squeeze()
         loss_OCR_fake = self.OCR_criterion(pred_fake_OCR, target)
         self.loss_OCR_fake = torch.mean(loss_OCR_fake[~torch.isnan(loss_OCR_fake)])
 
-        self.loss_T = self.loss_G + self.loss_w_fake + (5.0 * self.loss_OCR_fake)
+        # 🌟 G 沒有被放大，所以直接給 3.0 倍
+        self.loss_T = self.loss_G + self.loss_w_fake + (3.0 * self.loss_OCR_fake)
         self.loss_T.backward()
 
     def backward_G(self):
@@ -740,15 +760,19 @@ class TRGAN(nn.Module):
         self.loss_w_fake = self.netW(self.fake, self.wcl)
         
         pred_fake_OCR = self.netOCR(self.fake)
-        target = self.text_encode_fake.detach().long().view(-1)
+        if pred_fake_OCR.dim() == 3:
+            pred_fake_OCR = pred_fake_OCR.squeeze(0)
+        target = self.text_encode_fake.detach().long().squeeze()
         loss_OCR_fake = self.OCR_criterion(pred_fake_OCR, target)
         self.loss_OCR_fake = torch.mean(loss_OCR_fake[~torch.isnan(loss_OCR_fake)])
         
+        # 🚨 注意：這裡的 G 被偷偷放大了 10 倍！
         self.loss_G_ = 10 * self.loss_G + self.loss_w_fake
-        self.loss_T = self.loss_G_ + (5.0 * self.loss_OCR_fake)
+        # 🌟 所以 OCR 必須是 10 * 3.0 = 30.0 倍，才能維持「相對 3 倍」的公平壓力！
+        self.loss_T = self.loss_G_ + (30.0 * self.loss_OCR_fake)
         self.loss_T.backward()
 
-            
+
 
     def optimize_D_OCR(self):
         self.forward()
@@ -926,8 +950,8 @@ class TRGAN(nn.Module):
         loss_OCR_fake = self.OCR_criterion(pred_fake_OCR, target)
         self.loss_OCR_fake = torch.mean(loss_OCR_fake[~torch.isnan(loss_OCR_fake)])
         
-        # 🌟 加上 5 倍權重
-        self.loss_T = self.loss_G + (2.0 * self.loss_OCR_fake)
+        # 🌟 G 沒有被放大，所以直接給 3.0 倍
+        self.loss_T = self.loss_G + (3.0 * self.loss_OCR_fake)
         
         self.loss_T.backward() # 原本是 self.loss_G.backward()
         torch.nn.utils.clip_grad_norm_(self.netG.parameters(), max_norm=1.0) # 👈 加上梯度保護
