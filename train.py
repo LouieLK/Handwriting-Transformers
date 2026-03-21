@@ -17,6 +17,7 @@ from models.model import TRGAN
 from params import *
 from torch import nn
 import wandb
+import csv
 
 def main():
 
@@ -29,7 +30,9 @@ def main():
                 TextDatasetObj,
                 batch_size=batch_size,
                 shuffle=True,
-                num_workers=0,
+                num_workers=8,
+                persistent_workers=True,
+                prefetch_factor=2,
                 pin_memory=True, drop_last=True,
                 collate_fn=TextDatasetObj.collate_fn)
 
@@ -38,7 +41,9 @@ def main():
                 TextDatasetObjval,
                 batch_size=batch_size,
                 shuffle=True,
-                num_workers=0,
+                num_workers=8,
+                persistent_workers=True,
+                prefetch_factor=2,
                 pin_memory=True, drop_last=True,
                 collate_fn=TextDatasetObjval.collate_fn)
 
@@ -87,9 +92,31 @@ def main():
         end_time = time.time()
         data_val = next(iter(datasetval))
         losses = model.get_current_losses()
-        page = model._generate_page(model.sdata, model.input['swids'])
-        page_val = model._generate_page(data_val['simg'].to(DEVICE), data_val['swids'])
+        
+        # 🌟 [新增] 自己把 Loss 寫進 CSV 檔案裡，永遠不怕找不到
+        log_file = "my_loss_log.csv"
+        file_exists = os.path.isfile(log_file)
+        
+        with open(log_file, mode='a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            # 如果是第一次建立檔案，先寫入標題
+            if not file_exists:
+                writer.writerow(['epoch', 'loss_G', 'loss_D', 'loss_OCR_real'])
+            
+            # 將 Tensor 轉換為浮點數寫入
+            # 使用 float() 是為了防止某些 loss 剛好是整數 0 而報錯
+            val_G = float(losses['G']) if hasattr(losses['G'], 'item') else float(losses['G'])
+            val_D = float(losses['D']) if hasattr(losses['D'], 'item') else float(losses['D'])
+            val_OCR = float(losses['OCR_real']) if hasattr(losses['OCR_real'], 'item') else float(losses['OCR_real'])
+            
+            writer.writerow([epoch, val_G, val_D, val_OCR])
 
+        if epoch % 1000 == 0:
+            page = model._generate_page(model.sdata, model.input['swids'])
+            page_val = model._generate_page(data_val['simg'].to(DEVICE), data_val['swids'])
+            
+            wandb.log({ "result":[wandb.Image(page, caption="page"),wandb.Image(page_val, caption="page_val")],
+                        })
         
         wandb.log({'loss-G': losses['G'],
                     'loss-D': losses['D'], 
@@ -105,9 +132,6 @@ def main():
                     })
 
                     
-        
-        wandb.log({ "result":[wandb.Image(page, caption="page"),wandb.Image(page_val, caption="page_val")],
-                    })
 
         
 

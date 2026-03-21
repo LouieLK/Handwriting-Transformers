@@ -53,7 +53,7 @@ def load_itw_samples(folder_path, num_samples = 15):
 
   imgs =  [crop_(im) for im in imgs]
   imgs = [cv2.resize(imgs_i, (int(32*(imgs_i.shape[1]/imgs_i.shape[0])), 32)) for imgs_i in imgs]
-  max_width = 192
+  max_width = 32
 
   imgs_pad = []
   imgs_wids = []
@@ -112,15 +112,39 @@ class TextDataset():
         self.IMG_DATA_AUTHOR = self.IMG_DATA[author_id]
         random_idxs = np.random.choice(len(self.IMG_DATA_AUTHOR), NUM_SAMPLES, replace = True)
 
-        rand_id_real = np.random.choice(len(self.IMG_DATA_AUTHOR))
-        real_img = self.transform(self.IMG_DATA_AUTHOR[rand_id_real]['img'].convert('L'))
-        real_labels = self.IMG_DATA_AUTHOR[rand_id_real]['label'].encode()
+        # rand_id_real = np.random.choice(len(self.IMG_DATA_AUTHOR))
+        # real_img = self.transform(self.IMG_DATA_AUTHOR[rand_id_real]['img'].convert('L'))
+        # real_labels = self.IMG_DATA_AUTHOR[rand_id_real]['label'].encode()
 
-        imgs = [np.array(self.IMG_DATA_AUTHOR[idx]['img'].convert('L')) for idx in random_idxs]
-        labels = [self.IMG_DATA_AUTHOR[idx]['label'].encode() for idx in random_idxs]
+        # imgs = [np.array(self.IMG_DATA_AUTHOR[idx]['img'].convert('L')) for idx in random_idxs]
+        # labels = [self.IMG_DATA_AUTHOR[idx]['label'].encode() for idx in random_idxs]
        
-        max_width = 192 #[img.shape[1] for img in imgs] 
+        # max_width = 32 #[img.shape[1] for img in imgs] 
         
+        rand_id_real = np.random.choice(len(self.IMG_DATA_AUTHOR))
+        
+        # 🌟 1. 動態讀取真實圖片並 Resize (128x128)
+        real_img_path = self.IMG_DATA_AUTHOR[rand_id_real]['img_path']
+        real_img_pil = Image.open(real_img_path).convert('L')
+        real_img_pil = real_img_pil.resize((resolution, resolution), Image.Resampling.LANCZOS)
+        real_img = self.transform(real_img_pil)
+        
+        # 🌟 2. 取得標籤 (並移除導致崩潰的 .encode() 毒藥)
+        real_labels = self.IMG_DATA_AUTHOR[rand_id_real]['label']
+
+        # 🌟 3. 動態讀取多張風格參考圖並 Resize
+        imgs = []
+        labels = []
+        for idx in random_idxs:
+            s_path = self.IMG_DATA_AUTHOR[idx]['img_path']
+            s_img_pil = Image.open(s_path).convert('L')
+            s_img_pil = s_img_pil.resize((resolution, resolution), Image.Resampling.LANCZOS)
+            imgs.append(np.array(s_img_pil))
+            labels.append(self.IMG_DATA_AUTHOR[idx]['label'])
+       
+        # 🌟 4. [關鍵修復] 英文是長條形所以設 192，中文是正方形，請直接改為 resolution
+        max_width = resolution
+
         imgs_pad = []
         imgs_wids = []
 
@@ -139,8 +163,11 @@ class TextDataset():
         imgs_pad = torch.cat(imgs_pad, 0)
         
 
-        item = {'simg': imgs_pad, 'swids':imgs_wids, 'img' : real_img, 'label':real_labels,'img_path':'img_path', 'idx':'indexes', 'wcl':index}
-    
+        # ================= 原本的程式碼 =================
+        # item = {'simg': imgs_pad, 'swids':imgs_wids, 'img' : real_img, 'label':real_labels,'img_path':'img_path', 'idx':'indexes', 'wcl':index}
+
+        # 🌟 請修改為 (將 'img_path':'img_path' 改為 'img_path': real_img_path)：
+        item = {'simg': imgs_pad, 'swids':imgs_wids, 'img' : real_img, 'label':real_labels,'img_path':real_img_path, 'idx':'indexes', 'wcl':index}
 
 
         return item
@@ -179,16 +206,36 @@ class TextDatasetval():
         self.IMG_DATA_AUTHOR = self.IMG_DATA[author_id]
         random_idxs = np.random.choice(len(self.IMG_DATA_AUTHOR), NUM_SAMPLES, replace = True)
 
-        rand_id_real = np.random.choice(len(self.IMG_DATA_AUTHOR))
-        real_img = self.transform(self.IMG_DATA_AUTHOR[rand_id_real]['img'].convert('L'))
-        real_labels = self.IMG_DATA_AUTHOR[rand_id_real]['label'].encode()
+        # rand_id_real = np.random.choice(len(self.IMG_DATA_AUTHOR))
+        # real_img = self.transform(self.IMG_DATA_AUTHOR[rand_id_real]['img'].convert('L'))
+        # real_labels = self.IMG_DATA_AUTHOR[rand_id_real]['label'].encode()
 
 
-        imgs = [np.array(self.IMG_DATA_AUTHOR[idx]['img'].convert('L')) for idx in random_idxs]
-        labels = [self.IMG_DATA_AUTHOR[idx]['label'].encode() for idx in random_idxs]
+        # imgs = [np.array(self.IMG_DATA_AUTHOR[idx]['img'].convert('L')) for idx in random_idxs]
+        # labels = [self.IMG_DATA_AUTHOR[idx]['label'].encode() for idx in random_idxs]
        
-        max_width = 192 #[img.shape[1] for img in imgs] 
+        # max_width = 32 #[img.shape[1] for img in imgs] 
         
+        rand_id_real = np.random.choice(len(self.IMG_DATA_AUTHOR))
+        
+        real_img_path = self.IMG_DATA_AUTHOR[rand_id_real]['img_path']
+        real_img_pil = Image.open(real_img_path).convert('L')
+        real_img_pil = real_img_pil.resize((resolution, resolution), Image.Resampling.LANCZOS)
+        real_img = self.transform(real_img_pil)
+        
+        real_labels = self.IMG_DATA_AUTHOR[rand_id_real]['label']
+
+        imgs = []
+        labels = []
+        for idx in random_idxs:
+            s_path = self.IMG_DATA_AUTHOR[idx]['img_path']
+            s_img_pil = Image.open(s_path).convert('L')
+            s_img_pil = s_img_pil.resize((resolution, resolution), Image.Resampling.LANCZOS)
+            imgs.append(np.array(s_img_pil))
+            labels.append(self.IMG_DATA_AUTHOR[idx]['label'])
+       
+        max_width = resolution
+
         imgs_pad = []
         imgs_wids = []
 
@@ -207,8 +254,8 @@ class TextDatasetval():
         imgs_pad = torch.cat(imgs_pad, 0)
         
 
-        item = {'simg': imgs_pad, 'swids':imgs_wids, 'img' : real_img, 'label':real_labels,'img_path':'img_path', 'idx':'indexes', 'wcl':index}
-    
+        # item = {'simg': imgs_pad, 'swids':imgs_wids, 'img' : real_img, 'label':real_labels,'img_path':'img_path', 'idx':'indexes', 'wcl':index}
+        item = {'simg': imgs_pad, 'swids':imgs_wids, 'img' : real_img, 'label':real_labels,'img_path':real_img_path, 'idx':'indexes', 'wcl':index}
 
 
         return item

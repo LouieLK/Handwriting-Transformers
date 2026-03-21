@@ -20,6 +20,7 @@ import cv2
 import time
 import matplotlib.pyplot as plt
 import shutil
+import torch.nn as nn
 
 def get_rgb(x):
   R = 255 - int(int(x>0.5)*255*(x-0.5)/0.5)
@@ -122,9 +123,9 @@ class Generator(nn.Module):
         self.query_embed = nn.Embedding(VOCAB_SIZE, TN_HIDDEN_DIM)
 
 
-        self.linear_q = nn.Linear(TN_DIM_FEEDFORWARD, TN_DIM_FEEDFORWARD*8)
+        self.linear_q = nn.Linear(TN_DIM_FEEDFORWARD, TN_DIM_FEEDFORWARD*16)
 
-        self.DEC = FCNDecoder(res_norm = 'in')
+        self.DEC = FCNDecoder(ups=5,res_norm = 'in')
 
 
         self._muE = nn.Linear(512,512)
@@ -223,8 +224,9 @@ class Generator(nn.Module):
 
             if ALL_CHARS: h = torch.stack([h[i][QR[i]] for i in range(batch_size)], 0)
 
-            h = h.view(h.size(0), h.shape[1]*2, 4, -1)
-            h = h.permute(0, 3, 2, 1)
+            # h = h.view(h.size(0), h.shape[1]*4, 4, -1)
+            # h = h.permute(0, 3, 2, 1)
+            h = h.view(-1, 512, 4, 4)
 
             h = self.DEC(h)
 
@@ -284,9 +286,10 @@ class Generator(nn.Module):
         h = self.linear_q(h)
         h = h.contiguous()
 
-        h = h.view(h.size(0), h.shape[1]*2, 4, -1)
-        h = h.permute(0, 3, 2, 1)
-
+        # h = h.view(h.size(0), h.shape[1]*4, 4, -1)
+        # h = h.permute(0, 3, 2, 1)
+        h = h.view(-1, 512, 4, 4)
+        
         h = self.DEC(h)
         
         self.dec_attn_weights = dec_attn_weights[-1].detach()
@@ -314,7 +317,8 @@ class TRGAN(nn.Module):
         self.netW = nn.DataParallel(WDiscriminator()).to(DEVICE)
         self.netconverter = strLabelConverter(ALPHABET)
         self.netOCR = CRNN().to(DEVICE)
-        self.OCR_criterion = CTCLoss(zero_infinity=True, reduction='none')
+        self.OCR_criterion = nn.CrossEntropyLoss(reduction='none')
+        # self.OCR_criterion = CTCLoss(zero_infinity=True, reduction='none')
 
         block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[2048]
         self.inception = InceptionV3([block_idx]).to(DEVICE)
@@ -370,9 +374,10 @@ class TRGAN(nn.Module):
         self.lex = lex
 
 
-        f = open('mytext.txt', 'r') 
-
-        self.text = [j.encode() for j in sum([i.split(' ') for i in f.readlines()], [])]#[:NUM_EXAMPLES]
+        # ❌ 刪除這行： self.text = [j.encode() for j in sum([i.split(' ') for i in f.readlines()], [])]
+        # ✅ 改成純字串：
+        with open('mytext.txt', 'r', encoding='utf-8') as f:
+            self.text = [j for j in sum([i.split(' ') for i in f.readlines()], [])]
         self.eval_text_encode, self.eval_len_text = self.netconverter.encode(self.text)
         self.eval_text_encode = self.eval_text_encode.to(DEVICE).repeat(self.batch_size, 1, 1)
 
@@ -438,7 +443,8 @@ class TRGAN(nn.Module):
             eval_text_encode = self.eval_text_encode
         if eval_len_text == None:
             eval_len_text = self.eval_len_text
-
+        # print("\n[DEBUG - 畫圖檢查]")
+        # print("預計畫出的文字編碼:", eval_text_encode[0].cpu().tolist())
 
         self.fakes = self.netG.Eval(ST, eval_text_encode)
 
@@ -619,7 +625,10 @@ class TRGAN(nn.Module):
         self.text_encode = self.text_encode.to(DEVICE).detach()
         self.len_text = self.len_text.detach()
 
-        self.words = [word.encode('utf-8') for word in np.random.choice(self.lex, self.batch_size)]
+
+        # ❌ 刪除這行： self.words = [word.encode('utf-8') for word in np.random.choice(self.lex, self.batch_size)]
+        # ✅ 改成純字串：
+        self.words = [word for word in np.random.choice(self.lex, self.batch_size)]
         self.text_encode_fake, self.len_text_fake = self.netconverter.encode(self.words)
         self.text_encode_fake = self.text_encode_fake.to(DEVICE)
         self.one_hot_fake = make_one_hot(self.text_encode_fake, self.len_text_fake, VOCAB_SIZE).to(DEVICE)
@@ -628,7 +637,7 @@ class TRGAN(nn.Module):
 
         for _ in range(NUM_WORDS - 1):
 
-            self.words_j = [word.encode('utf-8') for word in np.random.choice(self.lex, self.batch_size)]
+            self.words_j = [word for word in np.random.choice(self.lex, self.batch_size)]
             self.text_encode_fake_j, self.len_text_fake_j = self.netconverter.encode(self.words_j)
             self.text_encode_fake_j = self.text_encode_fake_j.to(DEVICE)
             self.text_encode_fake_js.append(self.text_encode_fake_j)
@@ -649,10 +658,13 @@ class TRGAN(nn.Module):
         self.loss_D = self.loss_Dreal + self.loss_Dfake
         
         self.pred_real_OCR = self.netOCR(self.real.detach())
-        preds_size = torch.IntTensor([self.pred_real_OCR.size(0)] * self.batch_size).detach()
-        loss_OCR_real = self.OCR_criterion(self.pred_real_OCR, self.text_encode.detach(), preds_size, self.len_text.detach())
+        # print("OCR 預測結果:", torch.argmax(self.pred_real_OCR[:, 0, :], dim=1).tolist())
+        # preds_size = torch.IntTensor([self.pred_real_OCR.size(0)] * self.batch_size).detach()
+        # loss_OCR_real = self.OCR_criterion(self.pred_real_OCR, self.text_encode.detach(), preds_size, self.len_text.detach())
+        # 🌟 算真圖 (Real)
+        target = self.text_encode.detach().long().view(-1)
+        loss_OCR_real = self.OCR_criterion(self.pred_real_OCR, target)
         self.loss_OCR_real = torch.mean(loss_OCR_real[~torch.isnan(loss_OCR_real)])
-       
         loss_total = self.loss_D + self.loss_OCR_real
         # backward
         loss_total.backward()
@@ -718,8 +730,11 @@ class TRGAN(nn.Module):
         self.loss_D = self.loss_Dreal + self.loss_Dfake
         # OCR loss on real data
         self.pred_real_OCR = self.netOCR(self.real.detach())
-        preds_size = torch.IntTensor([self.pred_real_OCR.size(0)] * self.opt.batch_size).detach()
-        loss_OCR_real = self.OCR_criterion(self.pred_real_OCR, self.text_encode.detach(), preds_size, self.len_text.detach())
+        # preds_size = torch.IntTensor([self.pred_real_OCR.size(0)] * self.opt.batch_size).detach()
+        # loss_OCR_real = self.OCR_criterion(self.pred_real_OCR, self.text_encode.detach(), preds_size, self.len_text.detach())
+        # 🌟 算真圖 (Real)
+        target = self.text_encode.detach().long().view(-1)
+        loss_OCR_real = self.OCR_criterion(self.pred_real_OCR, target)
         self.loss_OCR_real = torch.mean(loss_OCR_real[~torch.isnan(loss_OCR_real)])
         # total loss
         self.loss_w_real = self.netW(self.real.detach(), self.wcl)
@@ -746,7 +761,12 @@ class TRGAN(nn.Module):
         # OCR loss on real data
         self.pred_real_OCR = self.netOCR(self.real.detach())
         preds_size = torch.IntTensor([self.pred_real_OCR.size(0)] * self.opt.batch_size).detach()
-        loss_OCR_real = self.OCR_criterion(self.pred_real_OCR, self.text_encode.detach(), preds_size, self.len_text.detach())
+        # loss_OCR_real = self.OCR_criterion(self.pred_real_OCR, self.text_encode.detach(), preds_size, self.len_text.detach())
+        # 🌟 1. 將正確答案攤平成一維陣列 (Batch_size)
+        target = self.text_encode.detach().long().view(-1)
+        
+        # 🌟 2. 直接算誤差 (預測結果, 正確答案)
+        loss_OCR_real = self.OCR_criterion(self.pred_real_OCR, target)
         self.loss_OCR_real = torch.mean(loss_OCR_real[~torch.isnan(loss_OCR_real)])
 
         # backward
@@ -785,14 +805,17 @@ class TRGAN(nn.Module):
     
 
         pred_fake_OCR = self.netOCR(self.fake)
-        preds_size = torch.IntTensor([pred_fake_OCR.size(0)] * self.batch_size).detach()
-        loss_OCR_fake = self.OCR_criterion(pred_fake_OCR, self.text_encode_fake.detach(), preds_size, self.len_text_fake.detach())
+        # preds_size = torch.IntTensor([pred_fake_OCR.size(0)] * self.batch_size).detach()
+        # loss_OCR_fake = self.OCR_criterion(pred_fake_OCR, self.text_encode_fake.detach(), preds_size, self.len_text_fake.detach())
+        # 🌟 算假圖 (Fake) - 注意是用 fake 的變數！
+        target = self.text_encode_fake.detach().long().view(-1)
+        loss_OCR_fake = self.OCR_criterion(pred_fake_OCR, target)
         self.loss_OCR_fake = torch.mean(loss_OCR_fake[~torch.isnan(loss_OCR_fake)])
-        
+
         self.loss_G = self.loss_G + self.Lcycle1 + self.Lcycle2 + self.lda1 + self.lda2 - self.KLD
         
-        self.loss_T = self.loss_G + self.loss_OCR_fake
-
+        # self.loss_T = self.loss_G + self.loss_OCR_fake
+        self.loss_T = self.loss_G + (2.0 * self.loss_OCR_fake)
  
 
         grad_fake_OCR = torch.autograd.grad(self.loss_OCR_fake, self.fake, retain_graph=True)[0]
@@ -804,7 +827,7 @@ class TRGAN(nn.Module):
         
             
         self.loss_T.backward(retain_graph=True)
-
+        torch.nn.utils.clip_grad_norm_(self.netG.parameters(), max_norm=1.0) # 👈 加入這行
         
         grad_fake_OCR = torch.autograd.grad(self.loss_OCR_fake, self.fake, create_graph=True, retain_graph=True)[0]
         grad_fake_adv = torch.autograd.grad(self.loss_G, self.fake, create_graph=True, retain_graph=True)[0]
@@ -825,6 +848,7 @@ class TRGAN(nn.Module):
 
 
         self.loss_T.backward(retain_graph=True)
+        torch.nn.utils.clip_grad_norm_(self.netG.parameters(), max_norm=1.0) # 👈 加入這行
         grad_fake_OCR = torch.autograd.grad(self.loss_OCR_fake, self.fake, create_graph=False, retain_graph=True)[0]
         grad_fake_adv = torch.autograd.grad(self.loss_G, self.fake, create_graph=False, retain_graph=True)[0]
         self.loss_grad_fake_OCR = 10 ** 6 * torch.mean(grad_fake_OCR ** 2)
@@ -832,6 +856,7 @@ class TRGAN(nn.Module):
 
         with torch.no_grad():
             self.loss_T.backward()
+            torch.nn.utils.clip_grad_norm_(self.netG.parameters(), max_norm=1.0) # 👈 加入這行
     
         if any(torch.isnan(loss_OCR_fake)) or torch.isnan(self.loss_G):
             print('loss OCR fake: ', loss_OCR_fake, ' loss_G: ', self.loss_G, ' words: ', self.words)
@@ -887,8 +912,11 @@ class TRGAN(nn.Module):
         # OCR loss on real data
 
         pred_fake_OCR = self.netOCR(self.fake)
-        preds_size = torch.IntTensor([pred_fake_OCR.size(0)] * self.opt.batch_size).detach()
-        loss_OCR_fake = self.OCR_criterion(pred_fake_OCR, self.text_encode_fake.detach(), preds_size, self.len_text_fake.detach())
+        # preds_size = torch.IntTensor([pred_fake_OCR.size(0)] * self.opt.batch_size).detach()
+        # loss_OCR_fake = self.OCR_criterion(pred_fake_OCR, self.text_encode_fake.detach(), preds_size, self.len_text_fake.detach())
+        # 🌟 算假圖 (Fake) - 注意是用 fake 的變數！
+        target = self.text_encode_fake.detach().long().view(-1)
+        loss_OCR_fake = self.OCR_criterion(pred_fake_OCR, target)
         self.loss_OCR_fake = torch.mean(loss_OCR_fake[~torch.isnan(loss_OCR_fake)])
         
 
@@ -900,7 +928,7 @@ class TRGAN(nn.Module):
        # l2 = self.params[0]*self.loss_OCR_fake
         #l3 = self.params[0]*self.loss_w_fake
         self.loss_G_ = 10*self.loss_G + self.loss_w_fake
-        self.loss_T = self.loss_G_ + self.loss_OCR_fake
+        self.loss_T = self.loss_G_ + (2.0 * self.loss_OCR_fake)
 
         grad_fake_OCR = torch.autograd.grad(self.loss_OCR_fake, self.fake, retain_graph=True)[0]
 
@@ -912,7 +940,7 @@ class TRGAN(nn.Module):
         if not False:
 
             self.loss_T.backward(retain_graph=True)
-
+            torch.nn.utils.clip_grad_norm_(self.netG.parameters(), max_norm=1.0) # 👈 加入這行
          
             grad_fake_OCR = torch.autograd.grad(self.loss_OCR_fake, self.fake, create_graph=True, retain_graph=True)[0]
             grad_fake_adv = torch.autograd.grad(self.loss_G_, self.fake, create_graph=True, retain_graph=True)[0]
@@ -935,16 +963,20 @@ class TRGAN(nn.Module):
             self.loss_OCR_fake = a.detach() * self.loss_OCR_fake
             #self.loss_w_fake = a0.detach() * self.loss_w_fake
 
-            self.loss_T = (1-1*self.opt.onlyOCR)*self.loss_G_ + self.loss_OCR_fake# + self.loss_w_fake
+            # self.loss_T = (1-1*self.opt.onlyOCR)*self.loss_G_ + self.loss_OCR_fake# + self.loss_w_fake
+            self.loss_T = (1-1*self.opt.onlyOCR)*self.loss_G_ + (2.0 * self.loss_OCR_fake)
             self.loss_T.backward(retain_graph=True)
+            torch.nn.utils.clip_grad_norm_(self.netG.parameters(), max_norm=1.0) # 👈 加入這行
             grad_fake_OCR = torch.autograd.grad(self.loss_OCR_fake, self.fake, create_graph=False, retain_graph=True)[0]
             grad_fake_adv = torch.autograd.grad(self.loss_G_, self.fake, create_graph=False, retain_graph=True)[0]
             self.loss_grad_fake_OCR = 10 ** 6 * torch.mean(grad_fake_OCR ** 2)
             self.loss_grad_fake_adv = 10 ** 6 * torch.mean(grad_fake_adv ** 2)
             with torch.no_grad():
                 self.loss_T.backward()
+                torch.nn.utils.clip_grad_norm_(self.netG.parameters(), max_norm=1.0) # 👈 加入這行
         else:
             self.loss_T.backward()
+            torch.nn.utils.clip_grad_norm_(self.netG.parameters(), max_norm=1.0) # 👈 加入這行
 
         if self.opt.clip_grad > 0:
              clip_grad_norm_(self.netG.parameters(), self.opt.clip_grad)
@@ -1041,10 +1073,18 @@ class TRGAN(nn.Module):
 
     def optimize_ocr(self):
         self.set_requires_grad([self.netOCR], True)
-        # OCR loss on real data
+        
+        # 1. 取得預測
         pred_real_OCR = self.netOCR(self.real)
-        preds_size =torch.IntTensor([pred_real_OCR.size(0)] * self.opt.batch_size).detach()
-        self.loss_OCR_real = self.OCR_criterion(pred_real_OCR, self.text_encode.detach(), preds_size, self.len_text.detach())
+        
+        # 2. 取得正確答案並攤平
+        target = self.text_encode.detach().long().view(-1)
+        
+        # 3. 計算 CE Loss 並取平均
+        loss_OCR_real = self.OCR_criterion(pred_real_OCR, target)
+        self.loss_OCR_real = torch.mean(loss_OCR_real[~torch.isnan(loss_OCR_real)])
+        
+        # 4. 梯度更新
         self.loss_OCR_real.backward()
         self.optimizer_OCR.step()
 
@@ -1057,6 +1097,7 @@ class TRGAN(nn.Module):
         self.set_requires_grad([self.netD], False)
         self.optimizer_G.zero_grad()
         self.backward_G()
+        torch.nn.utils.clip_grad_norm_(self.netG.parameters(), max_norm=1.0) # 👈 在 step 之前加入這行保護
         self.optimizer_G.step()
 
         self.set_requires_grad([self.netD], True)
@@ -1112,7 +1153,19 @@ class TRGAN(nn.Module):
         self.optimizer_G.zero_grad()
         self.forward()
         self.loss_G = loss_hinge_gen(self.netD(self.fake, self.label_fake), self.len_text_fake.detach(), self.opt.mask_loss)
-        self.loss_G.backward()
+        
+        # 🌟 這裡根本沒有算 OCR Loss！(原作者漏寫了，這會導致 G 完全無視字型)
+        # ✅ 請補上 OCR 的懲罰：
+        pred_fake_OCR = self.netOCR(self.fake)
+        target = self.text_encode_fake.detach().long().view(-1)
+        loss_OCR_fake = self.OCR_criterion(pred_fake_OCR, target)
+        self.loss_OCR_fake = torch.mean(loss_OCR_fake[~torch.isnan(loss_OCR_fake)])
+        
+        # 🌟 加上 5 倍權重
+        self.loss_T = self.loss_G + (2.0 * self.loss_OCR_fake)
+        
+        self.loss_T.backward() # 原本是 self.loss_G.backward()
+        torch.nn.utils.clip_grad_norm_(self.netG.parameters(), max_norm=1.0) # 👈 加上梯度保護
         self.optimizer_G.step()
 
 

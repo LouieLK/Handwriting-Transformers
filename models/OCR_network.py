@@ -5,7 +5,7 @@ import os
 import torch
 from .networks import *
 from params import *
-
+import torch.nn.functional as F
 class BidirectionalLSTM(nn.Module):
 
     def __init__(self, nIn, nHidden, nOut):
@@ -35,7 +35,7 @@ class CRNN(nn.Module):
 
         ks = [3, 3, 3, 3, 3, 3, 2]
         ps = [1, 1, 1, 1, 1, 1, 0]
-        ss = [1, 1, 1, 1, 1, 1, 1]
+        ss = [2, 2, 1, 1, 1, 1, 1]
         nm = [64, 128, 256, 256, 512, 512, 512]
 
         cnn = nn.Sequential()
@@ -73,11 +73,18 @@ class CRNN(nn.Module):
         convRelu(6, True)  # 512x1x16
 
         self.cnn = cnn
-        self.use_rnn = False
+        
+        # 🌟 1. 如您所推測的，將 Latent (隱藏層) 容量翻倍，從 256 加大到 512
+        nh = 512 
+        
+        # 🌟 2. 解開記憶體封印！啟用 LSTM 序列網路
+        self.use_rnn = True 
+        
         if self.use_rnn:
             self.rnn = nn.Sequential(
                 BidirectionalLSTM(512, nh, nh),
-                BidirectionalLSTM(nh, nh, ))
+                # 🌟 3. 修復 Bug：原作者漏寫了最後一個參數，必須補上 VOCAB_SIZE
+                BidirectionalLSTM(nh, nh, VOCAB_SIZE)) 
         else:
             self.linear = nn.Linear(512, VOCAB_SIZE)
 
@@ -92,20 +99,21 @@ class CRNN(nn.Module):
         self = init_weights(self, self.init)
 
     def forward(self, input):
-        # conv features
         conv = self.cnn(input)
         b, c, h, w = conv.size()
-        if h!=1:
-            print('a')
         assert h == 1, "the height of conv must be 1"
         conv = conv.squeeze(2)
-        conv = conv.permute(2, 0, 1)  # [w, b, c]
+        conv = conv.permute(2, 0, 1)  # 形狀變成 [T, Batch, 512]
 
         if self.use_rnn:
-            # rnn features
-            output = self.rnn(conv)
+            output = self.rnn(conv)   # 形狀變成 [T, Batch, VOCAB_SIZE]
         else:
             output = self.linear(conv)
+
+        # 🌟 [核彈級修改] 不要回傳序列了！我們把 T 個碎片的結果「平均」起來，總結成一個答案
+        output = output.mean(dim=0)   # 形狀瞬間變成 [Batch, VOCAB_SIZE]
+        
+        # 🌟 CrossEntropyLoss 內建 softmax 機制，這裡直接回傳原始數值即可！
         return output
 
     def backward_hook(self, module, grad_input, grad_output):
@@ -255,7 +263,8 @@ class strLabelConverter(object):
         result = []
         results = []
         for item in text:
-            item = item.decode('utf-8', 'strict')
+            if isinstance(item, bytes):
+                item = item.decode('utf-8')
             length.append(len(item))
             for char in item:
                 index = self.dict[char]
