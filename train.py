@@ -60,22 +60,23 @@ def main():
 
     for epoch in range(EPOCHS):
         
-        # 🌟 絕對安全的 OCR 新手保護期 (Warm-up)
-        if epoch < 500:
-            # 階段一：純粹學畫畫 (完全無視 OCR，逼 G 學會畫出漂亮的墨水線條)
+        # 🌟 重新設計的「強迫學基本功」雙重保護期
+        if epoch < 1000:
+            # 階段一：純粹學畫畫 (完全關閉 OCR 和 作者風格，逼 G 對決 D，只畫墨水)
             current_ocr_weight = 0.0 
-        elif epoch < 1500:
-            # 階段二：溫和引導 (1.0 的輕微壓力，讓墨水線條開始聚攏成字的形狀)
-            current_ocr_weight = 0.1 
-        elif epoch < 3000:
-            # 階段三：正式訓練 (等比例的壓力，要求字一定要寫對)
-            current_ocr_weight = 1.0 
+            current_w_weight = 0.0
+        elif epoch < 2000:
+            # 階段二：溫和引導 (開始要求字體的形狀，並給予極輕微的風格要求)
+            current_ocr_weight = 0.5 
+            current_w_weight = 0.1
         else:
-            # 階段四：大師雕琢 (強大壓力，連撇捺的細節都不放過)
+            # 階段三：大師雕琢 (強烈要求字要對，且風格要像)
             current_ocr_weight = 3.0 
+            current_w_weight = 0.5  # 風格分類的 Loss 本身數值很大，建議最高 0.5 即可
             
-        # 將動態權重賦值給模型
+        # 確保模型吃到這兩個動態權重
         model.ocr_weight = current_ocr_weight
+        model.w_weight = current_w_weight
 
         
         start_time = time.time()

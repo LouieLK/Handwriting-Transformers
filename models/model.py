@@ -310,6 +310,7 @@ class TRGAN(nn.Module):
     def __init__(self, batch_size=batch_size):
         super(TRGAN, self).__init__() 
         
+        self.w_weight = 0.1
         self.ocr_weight = 0.1
         self.batch_size = batch_size
         self.epsilon = 1e-7
@@ -737,7 +738,7 @@ class TRGAN(nn.Module):
         loss_OCR_fake = self.OCR_criterion(pred_fake_OCR, target)
         self.loss_OCR_fake = torch.mean(loss_OCR_fake[~torch.isnan(loss_OCR_fake)])
 
-        self.loss_T = self.loss_G + self.loss_w_fake + (self.ocr_weight * self.loss_OCR_fake)
+        self.loss_T = self.loss_G + (self.w_weight * self.loss_w_fake) + (self.ocr_weight * self.loss_OCR_fake)
         self.loss_T.backward()
 
     def backward_G(self):
@@ -754,7 +755,7 @@ class TRGAN(nn.Module):
         loss_OCR_fake = self.OCR_criterion(pred_fake_OCR, target)
         self.loss_OCR_fake = torch.mean(loss_OCR_fake[~torch.isnan(loss_OCR_fake)])
         
-        self.loss_G_ = self.loss_G + self.loss_w_fake
+        self.loss_G_ = self.loss_G + (self.w_weight * self.loss_w_fake)
         self.loss_T = self.loss_G_ + (self.ocr_weight * self.loss_OCR_fake)
         self.loss_T.backward()
 
