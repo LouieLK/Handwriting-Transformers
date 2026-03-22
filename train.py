@@ -60,25 +60,6 @@ def main():
 
     for epoch in range(EPOCHS):
         
-        # 🌟 重新設計的「強迫學基本功」雙重保護期
-        if epoch < 1000:
-            # 階段一：純粹學畫畫 (完全關閉 OCR 和 作者風格，逼 G 對決 D，只畫墨水)
-            current_ocr_weight = 0.0 
-            current_w_weight = 0.0
-        elif epoch < 2000:
-            # 階段二：溫和引導 (開始要求字體的形狀，並給予極輕微的風格要求)
-            current_ocr_weight = 0.5 
-            current_w_weight = 0.1
-        else:
-            # 階段三：大師雕琢 (強烈要求字要對，且風格要像)
-            current_ocr_weight = 3.0 
-            current_w_weight = 0.5  # 風格分類的 Loss 本身數值很大，建議最高 0.5 即可
-            
-        # 確保模型吃到這兩個動態權重
-        model.ocr_weight = current_ocr_weight
-        model.w_weight = current_w_weight
-
-        
         start_time = time.time()
         
         for i,data in enumerate(dataset): 

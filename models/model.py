@@ -711,22 +711,48 @@ class TRGAN(nn.Module):
         
         return self.loss_D
 
-
     def backward_G_only(self):
+        self.gb_alpha = 0.7
+        self.epsilon = 1e-8
+
+        # 1. 算 GAN Loss
         self.loss_G = loss_hinge_gen(self.netD(**{'x': self.fake}), self.len_text_fake.detach(), True).mean()
-        
+
+        # 2. 算 OCR Loss
         pred_fake_OCR = self.netOCR(self.fake)
         if pred_fake_OCR.dim() == 3:
             pred_fake_OCR = pred_fake_OCR.squeeze(0)
         target = self.text_encode_fake.detach().long().squeeze()
-        
         loss_OCR_fake = self.OCR_criterion(pred_fake_OCR, target)
         self.loss_OCR_fake = torch.mean(loss_OCR_fake[~torch.isnan(loss_OCR_fake)])
 
-        self.loss_T = self.loss_G + (self.ocr_weight * self.loss_OCR_fake)
-        self.loss_T.backward()
+        # 3. 🌟 動態梯度平衡 (Gradient Balancing)
+        # 取出假圖的梯度
+        grad_fake_OCR = torch.autograd.grad(self.loss_OCR_fake, self.fake, retain_graph=True)[0]
+        grad_fake_adv = torch.autograd.grad(self.loss_G, self.fake, retain_graph=True)[0]
+
+        # 計算標準差比值 (避震器)
+        a_ocr = self.gb_alpha * torch.div(torch.std(grad_fake_adv), self.epsilon + torch.std(grad_fake_OCR))
+
+        # 保護機制：避免權重過於極端
+        if a_ocr > 1000.0: a_ocr = torch.tensor(1000.0).to(DEVICE)
+        if a_ocr < 0.0001: a_ocr = torch.tensor(0.0001).to(DEVICE)
+
+        # 套用動態權重
+        self.loss_OCR_fake = a_ocr.detach() * self.loss_OCR_fake
+
+        # 4. 最終加總與反向傳播
+        self.loss_T = self.loss_G + self.loss_OCR_fake
+        
+        # 加上原作者的防呆
+        with torch.no_grad():
+            self.loss_T.backward()
 
     def backward_G_WL(self):
+        self.gb_alpha = 0.7
+        self.epsilon = 1e-8
+
+        # 1. 算各種 Loss
         self.loss_G = loss_hinge_gen(self.netD(**{'x': self.fake}), self.len_text_fake.detach(), True).mean()
         self.loss_w_fake = self.netW(self.fake, self.input['wcl'].to(DEVICE)).mean()
         
@@ -734,12 +760,32 @@ class TRGAN(nn.Module):
         if pred_fake_OCR.dim() == 3:
             pred_fake_OCR = pred_fake_OCR.squeeze(0)
         target = self.text_encode_fake.detach().long().squeeze()
-        
         loss_OCR_fake = self.OCR_criterion(pred_fake_OCR, target)
         self.loss_OCR_fake = torch.mean(loss_OCR_fake[~torch.isnan(loss_OCR_fake)])
 
-        self.loss_T = self.loss_G + (self.w_weight * self.loss_w_fake) + (self.ocr_weight * self.loss_OCR_fake)
-        self.loss_T.backward()
+        # 3. 🌟 雙重動態梯度平衡 (OCR 與 風格 同時避震)
+        grad_fake_OCR = torch.autograd.grad(self.loss_OCR_fake, self.fake, retain_graph=True)[0]
+        grad_fake_WL = torch.autograd.grad(self.loss_w_fake, self.fake, retain_graph=True)[0]
+        grad_fake_adv = torch.autograd.grad(self.loss_G, self.fake, retain_graph=True)[0]
+
+        # 計算比值
+        a_ocr = self.gb_alpha * torch.div(torch.std(grad_fake_adv), self.epsilon + torch.std(grad_fake_OCR))
+        a_wl = self.gb_alpha * torch.div(torch.std(grad_fake_adv), self.epsilon + torch.std(grad_fake_WL))
+
+        if a_ocr > 1000.0: a_ocr = torch.tensor(1000.0).to(DEVICE)
+        if a_ocr < 0.0001: a_ocr = torch.tensor(0.0001).to(DEVICE)
+        if a_wl > 1000.0: a_wl = torch.tensor(1000.0).to(DEVICE)
+        if a_wl < 0.0001: a_wl = torch.tensor(0.0001).to(DEVICE)
+
+        # 套用動態權重
+        self.loss_OCR_fake = a_ocr.detach() * self.loss_OCR_fake
+        self.loss_w_fake = a_wl.detach() * self.loss_w_fake
+
+        # 4. 最終加總與反向傳播
+        self.loss_T = self.loss_G + self.loss_w_fake + self.loss_OCR_fake
+        
+        with torch.no_grad():
+            self.loss_T.backward()
 
     def backward_G(self):
         mask_val = getattr(self.opt, 'mask_loss', True) if hasattr(self, 'opt') else True
