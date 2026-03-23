@@ -719,7 +719,15 @@ class TRGAN(nn.Module):
         self.loss_G = loss_hinge_gen(self.netD(**{'x': self.fake}), self.len_text_fake.detach(), True).mean()
 
         # 2. 算 OCR Loss
-        pred_fake_OCR = self.netOCR(self.fake)
+        # ------------------- [修改這裡] -------------------
+        # 加入微小的高斯雜訊，破壞 G 用來作弊的高頻像素點 (Adversarial defense)
+        # 這會逼迫 G 畫出真正厚實的筆畫，而非依賴脆弱的雜訊點
+        noise = torch.randn_like(self.fake) * 0.1 
+        fake_for_ocr = self.fake + noise
+        
+        # 2. 算 OCR Loss (改用加上 noise 的圖片)
+        pred_fake_OCR = self.netOCR(fake_for_ocr)
+        # --------------------------------------------------
         if pred_fake_OCR.dim() == 3:
             pred_fake_OCR = pred_fake_OCR.squeeze(0)
         target = self.text_encode_fake.detach().long().squeeze()
@@ -737,6 +745,10 @@ class TRGAN(nn.Module):
         # 保護機制：避免權重過於極端
         if a_ocr > 1000.0: a_ocr = torch.tensor(1000.0).to(DEVICE)
         if a_ocr < 0.0001: a_ocr = torch.tensor(0.0001).to(DEVICE)
+
+        # 💡 強烈建議加上這行印出 a_ocr，這是驗證我們策略是否成功的關鍵！
+        # 如果 a_ocr 不再卡在 1000.0，代表你的推論完全正確，系統恢復健康。
+        print(f"Dynamic Weight a_ocr: {a_ocr.item():.4f}")
 
         # 套用動態權重
         self.loss_OCR_fake = a_ocr.detach() * self.loss_OCR_fake
@@ -756,7 +768,15 @@ class TRGAN(nn.Module):
         self.loss_G = loss_hinge_gen(self.netD(**{'x': self.fake}), self.len_text_fake.detach(), True).mean()
         self.loss_w_fake = self.netW(self.fake, self.input['wcl'].to(DEVICE)).mean()
         
-        pred_fake_OCR = self.netOCR(self.fake)
+        # ------------------- [修改這裡] -------------------
+        # 加入微小的高斯雜訊，破壞 G 用來作弊的高頻像素點 (Adversarial defense)
+        # 這會逼迫 G 畫出真正厚實的筆畫，而非依賴脆弱的雜訊點
+        noise = torch.randn_like(self.fake) * 0.1 
+        fake_for_ocr = self.fake + noise
+        
+        # 2. 算 OCR Loss (改用加上 noise 的圖片)
+        pred_fake_OCR = self.netOCR(fake_for_ocr)
+        # --------------------------------------------------
         if pred_fake_OCR.dim() == 3:
             pred_fake_OCR = pred_fake_OCR.squeeze(0)
         target = self.text_encode_fake.detach().long().squeeze()
@@ -776,6 +796,11 @@ class TRGAN(nn.Module):
         if a_ocr < 0.0001: a_ocr = torch.tensor(0.0001).to(DEVICE)
         if a_wl > 1000.0: a_wl = torch.tensor(1000.0).to(DEVICE)
         if a_wl < 0.0001: a_wl = torch.tensor(0.0001).to(DEVICE)
+
+        # 💡 強烈建議加上這行印出 a_ocr，這是驗證我們策略是否成功的關鍵！
+        # 如果 a_ocr 不再卡在 1000.0，代表你的推論完全正確，系統恢復健康。
+        print(f"Dynamic Weight a_ocr: {a_ocr.item():.4f}")
+        print(f"Dynamic Weight a_wl: {a_wl.item():.4f}")
 
         # 套用動態權重
         self.loss_OCR_fake = a_ocr.detach() * self.loss_OCR_fake

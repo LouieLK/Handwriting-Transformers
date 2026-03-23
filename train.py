@@ -71,10 +71,14 @@ def main():
                 model.optimize_G_step()
 
             if (i % NUM_CRITIC_DOCR_TRAIN) == 0:
-
+                
                 model._set_input(data)
-                model.optimize_D_OCR()
-                model.optimize_D_OCR_step()
+                
+                # 只有當 D 還沒完美分辨出真假 (Loss > 0.2) 時，才允許更新 D
+                # 如果 loss_D 已經是 0.0，就跳過這次更新，讓 G 喘口氣
+                if not hasattr(model, 'loss_D') or model.loss_D.item() > 0.2:
+                    model.optimize_D_OCR()
+                    model.optimize_D_OCR_step()
 
             if (i % NUM_CRITIC_GWL_TRAIN) == 0:
 
@@ -85,8 +89,12 @@ def main():
             if (i % NUM_CRITIC_DWL_TRAIN) == 0:
 
                 model._set_input(data)
-                model.optimize_D_WL()
-                model.optimize_D_WL_step()
+                
+                # 只有當 D 還沒完美分辨出真假 (Loss > 0.2) 時，才允許更新 D
+                # 如果 loss_D 已經是 0.0，就跳過這次更新，讓 G 喘口氣
+                if model.loss_w_fake.item() + model.loss_w_real.item() > 0.2:
+                    model.optimize_D_WL()
+                    model.optimize_D_WL_step()
 
         end_time = time.time()
         data_val = next(iter(datasetval))

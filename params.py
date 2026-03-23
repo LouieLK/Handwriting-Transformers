@@ -2,7 +2,7 @@ import torch
 
 ###############################################
 
-EXP_NAME = "CHINESE-HWT-Run2"; RESUME = False
+EXP_NAME = "CHINESE-HWT-Run4"; RESUME = False
 
 DATASET = 'CHINESE_128'
 if DATASET == 'IAM':
@@ -40,10 +40,10 @@ D_LR = 0.00002
 W_LR = 0.00002
 OCR_LR = 0.0005
 EPOCHS = 100000
-NUM_CRITIC_GOCR_TRAIN = 2
-NUM_CRITIC_DOCR_TRAIN = 1
-NUM_CRITIC_GWL_TRAIN = 2
-NUM_CRITIC_DWL_TRAIN = 1
+NUM_CRITIC_GOCR_TRAIN = 1
+NUM_CRITIC_DOCR_TRAIN = 2
+NUM_CRITIC_GWL_TRAIN = 1
+NUM_CRITIC_DWL_TRAIN = 2
 NUM_FID_FREQ = 1000000000
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
