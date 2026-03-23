@@ -755,7 +755,14 @@ class TRGAN(nn.Module):
         self.loss_OCR_fake = a_ocr.detach() * self.loss_OCR_fake
 
         # 4. 最終加總與反向傳播
-        self.loss_T = self.loss_G + self.loss_OCR_fake
+        self.loss_T = self.loss_G
+        if hasattr(self, 'loss_OCR_real') and self.loss_OCR_real < 4.5:
+            # 只有當 OCR 不是瞎子時，才允許它的 Loss 參與指導 G
+            self.loss_T = self.loss_T + self.loss_OCR_fake
+        else:
+            # 可選：印出來觀察何時 OCR 才會醒來
+            self.loss_OCR_fake = self.loss_OCR_fake * 0.0
+            pass
         
         # 加上原作者的防呆
         with torch.no_grad():
@@ -808,9 +815,23 @@ class TRGAN(nn.Module):
         self.loss_w_fake = a_wl.detach() * self.loss_w_fake
 
         # 4. 最終加總與反向傳播
-        self.loss_T = self.loss_G + self.loss_w_fake + self.loss_OCR_fake
+        # 1. 先只讓 GAN Loss 參與
+        self.loss_T = self.loss_G 
         
-        with torch.no_grad():
+        # 2. OCR 防護罩
+        if hasattr(self, 'loss_OCR_real') and self.loss_OCR_real < 4.5:
+            self.loss_T = self.loss_T + self.loss_OCR_fake
+        else:
+            self.loss_OCR_fake = self.loss_OCR_fake * 0.0
+
+        # 3. 🌟 新增：風格網路 (WL) 防護罩
+        # 你的 loss_w_real 目前在 6.4 左右瞎猜，我們設定降到 4.0 以下才解鎖
+        if hasattr(self, 'loss_w_real') and self.loss_w_real < 4.0:
+            self.loss_T = self.loss_T + self.loss_w_fake
+        else:
+            self.loss_w_fake = self.loss_w_fake * 0.0
+            
+        with torch.no_grad(): # (記得！如果你沒有把這行拔掉，就維持現狀)
             self.loss_T.backward()
 
     def backward_G(self):
