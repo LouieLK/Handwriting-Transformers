@@ -70,30 +70,39 @@ def main():
                 model.optimize_G_only()
                 model.optimize_G_step()
 
-            if (i % NUM_CRITIC_DOCR_TRAIN) == 0:
-                
-                model._set_input(data)
-                
-                # 只有當 D 還沒完美分辨出真假 (Loss > 0.2) 時，才允許更新 D
-                # 如果 loss_D 已經是 0.0，就跳過這次更新，讓 G 喘口氣
-                if not hasattr(model, 'loss_D') or model.loss_D.item() > 0.2:
-                    model.optimize_D_OCR()
-                    model.optimize_D_OCR_step()
-
             if (i % NUM_CRITIC_GWL_TRAIN) == 0:
 
                 model._set_input(data)
                 model.optimize_G_WL()
                 model.optimize_G_step()
 
-            if (i % NUM_CRITIC_DWL_TRAIN) == 0:
-
+            if (i % NUM_CRITIC_DOCR_TRAIN) == 0:
                 model._set_input(data)
                 
-                # 只有當 D 還沒完美分辨出真假 (Loss > 0.2) 時，才允許更新 D
-                # 如果 loss_D 已經是 0.0，就跳過這次更新，讓 G 喘口氣
-                if model.loss_w_fake.item() + model.loss_w_real.item() > 0.2:
-                    model.optimize_D_WL()
+                # 1. 永遠都要算 Loss 與梯度 (確保 model.loss_D 是最新鮮的)
+                model.optimize_D_OCR()
+                
+                # 2. 只有當 D 的表現還不夠完美 (Loss > 0.2) 時，才「真正更新」權重
+                if model.loss_D.item() > 0.2:
+                    model.optimize_D_OCR_step()
+                else:
+                    # 選擇性：把梯度清空，以免累積到下次
+                    model.optimizer_D.zero_grad() 
+
+            # 同理，DWL 的部分也要先算再判斷，並且加入 hasattr 防呆！
+            if (i % NUM_CRITIC_DWL_TRAIN) == 0:
+                model._set_input(data)
+                
+                model.optimize_D_WL()
+                
+                # 避免初始化時屬性不存在的報錯
+                if hasattr(model, 'loss_w_fake') and hasattr(model, 'loss_w_real'):
+                    if (model.loss_w_fake.item() + model.loss_w_real.item()) > 0.2:
+                        model.optimize_D_WL_step()
+                    else:
+                        model.optimizer_D.zero_grad()
+                        model.optimizer_wl.zero_grad() # 確保原程式碼有這個 optimizer
+                else:
                     model.optimize_D_WL_step()
 
         end_time = time.time()

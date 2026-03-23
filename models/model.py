@@ -748,7 +748,8 @@ class TRGAN(nn.Module):
 
         # 💡 強烈建議加上這行印出 a_ocr，這是驗證我們策略是否成功的關鍵！
         # 如果 a_ocr 不再卡在 1000.0，代表你的推論完全正確，系統恢復健康。
-        print(f"Dynamic Weight a_ocr: {a_ocr.item():.4f}")
+        if torch.rand(1).item() < 0.01:
+            print(f"Dynamic Weight a_ocr: {a_ocr.item():.4f}")
 
         # 套用動態權重
         self.loss_OCR_fake = a_ocr.detach() * self.loss_OCR_fake
@@ -799,8 +800,8 @@ class TRGAN(nn.Module):
 
         # 💡 強烈建議加上這行印出 a_ocr，這是驗證我們策略是否成功的關鍵！
         # 如果 a_ocr 不再卡在 1000.0，代表你的推論完全正確，系統恢復健康。
-        print(f"Dynamic Weight a_ocr: {a_ocr.item():.4f}")
-        print(f"Dynamic Weight a_wl: {a_wl.item():.4f}")
+        if torch.rand(1).item() < 0.01:
+            print(f"[Monitor] a_ocr: {a_ocr.item():.4f} | a_wl: {a_wl.item():.4f}")
 
         # 套用動態權重
         self.loss_OCR_fake = a_ocr.detach() * self.loss_OCR_fake
